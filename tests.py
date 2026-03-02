@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from bleak import BleakClient, BleakScanner
+from bleak.exc import BleakBluetoothNotAvailableError
 
 # Use the UUIDs we defined in the ESP-IDF C code
 SERVICE_UUID = "000000ff-0000-1000-8000-00805f9b34fb"
@@ -18,34 +19,51 @@ def status_handler(sender, data):
     print(f"*** TEST RESULT RECEIVED: {result} ***")
 
 async def run_tester():
-    print("Scanning for ESP_AUTO_TESTER...")
-    device = await BleakScanner.find_device_by_name("ESP_AUTO_TESTER")
-    
-    if not device:
-        print("Tester not found. Check if ESP32 is advertising.")
-        return
+    try:
+        print("Scanning for ESP_AUTO_TESTER...")
+        device = await BleakScanner.find_device_by_name("ESP_AUTO_TESTER")
+        
+        if not device:
+            print("Tester not found. Check if ESP32 is advertising.")
+            return
 
-    async with BleakClient(device) as client:
-        print(f"Connected to {device.address}")
+        async with BleakClient(device) as client:
+            print(f"Connected to {device.address}")
 
-        # 1. Subscribe to Status and Logs
-        await client.start_notify(STATUS_UUID, status_handler)
-        await client.start_notify(DATA_UUID, notification_handler)
+            # 1. Subscribe to Status and Logs
+            await client.start_notify(STATUS_UUID, status_handler)
+            await client.start_notify(DATA_UUID, notification_handler)
 
-        # 2. Send START command (0x01)
-        print("Sending START command...")
-        await client.write_gatt_char(CMD_UUID, bytearray([0x01]))
+            # 2. Send START command (0x01)
+            print("Sending START command...")
+            await client.write_gatt_char(CMD_UUID, bytearray([0x01]))
 
-        # 3. Keep the script running while the test executes
-        print("Waiting for test results (Press Ctrl+C to stop)...")
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        finally:
-            await client.stop_notify(STATUS_UUID)
-            await client.stop_notify(DATA_UUID)
+            # 3. Keep the script running while the test executes
+            print("Waiting for test results (Press Ctrl+C to stop)...")
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                pass
+            finally:
+                await client.stop_notify(STATUS_UUID)
+                await client.stop_notify(DATA_UUID)
+    except BleakBluetoothNotAvailableError as e:
+        print("\n" + "="*60)
+        print("ERROR: Bluetooth is not available!")
+        print("="*60)
+        print("\nPlease do the following:")
+        print("  1. Turn ON Bluetooth in Windows Settings")
+        print("     Settings > Bluetooth & devices > Toggle Bluetooth ON")
+        print("")
+        print("  2. Or click the Bluetooth icon in the system tray")
+        print("     and enable Bluetooth")
+        print("")
+        print("  3. If using a USB Bluetooth adapter,")
+        print("     make sure it's plugged in and drivers are installed")
+        print("="*60 + "\n")
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     asyncio.run(run_tester())
