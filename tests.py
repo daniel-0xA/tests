@@ -20,11 +20,12 @@ def status_handler(sender, data):
 
 async def run_tester():
     try:
-        print("Scanning for ESP_AUTO_TESTER...")
-        device = await BleakScanner.find_device_by_name("ESP_AUTO_TESTER")
+        devName = "nimble-ble-spp-svr1"#"OpenOBD" #"VEEPEAK"
+        print(f"Scanning for {devName}...")
+        device = await BleakScanner.find_device_by_name(devName)
         
         if not device:
-            print("Tester not found. Check if ESP32 is advertising.")
+            print(f"Tester not found. Check if {devName} is advertising.")
             return
 
         async with BleakClient(device) as client:

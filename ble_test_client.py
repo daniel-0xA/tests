@@ -9,6 +9,7 @@ import sys
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
+from bleak.exc import BleakBluetoothNotAvailableError
 
 # UUIDs matching the NimBLE server
 TESTER_SERVICE_UUID = "000000FF-0000-1000-8000-00805F9B34FB"
@@ -42,24 +43,55 @@ def notification_handler(characteristic: BleakGATTCharacteristic, data: bytearra
 async def find_device() -> BLEDevice | None:
     """Scan for the NimBLE GATT server device"""
     print("Scanning for BLE devices...")
-    devices = await BleakScanner.discover(timeout=5)
     
-    if not devices:
-        print("No BLE devices found. Ensure Bluetooth is ON.")
-        return None
+    try:
+        # Try newer API with return_advertisement_data=True
+        result = await BleakScanner.discover(timeout=5, return_advertisement_data=True)
+        
+        # Handle dict vs list response
+        if isinstance(result, dict):
+            devices = result
+        else:
+            # Older API returns list, convert to dict
+            devices = {d: None for d in result}
+        
+        if not devices:
+            print("No BLE devices found. Ensure Bluetooth is ON.")
+            return None
 
-    print(f"{'Name':<30} | {'Address':<20} | {'RSSI':<5}")
-    print("-" * 60)
-    
-    for device in devices:
-        name = device.name if device.name else "Unknown"
-        print(f"{name:<30} | {device.address:<20} | {device.rssi} dBm")
+        print(f"{'Name':<30} | {'Address':<20} | {'RSSI':<5}")
+        print("-" * 60)
+        
+        for device, adv_data in devices.items():
+            name = device.name if device.name else "Unknown"
+            rssi = adv_data.rssi if adv_data else -999
+            print(f"{name:<30} | {device.address:<20} | {rssi} dBm")
 
-    # Look for our target device
-    for d in devices:
-        if d.name and ("NimBLE" in d.name or "ESP" in d.name or "GATT" in d.name):
-            print(f"\nFound target device: {d.name} ({d.address})")
-            return d
+        # Look for our target device
+        for device, adv_data in devices.items():
+            if device.name and ("NimBLE" in device.name or "ESP" in device.name or "GATT" in device.name):
+                print(f"\nFound target device: {device.name} ({device.address})")
+                return device
+    except TypeError:
+        # Fallback to older API without return_advertisement_data
+        devices = await BleakScanner.discover(timeout=5)
+        
+        if not devices:
+            print("No BLE devices found. Ensure Bluetooth is ON.")
+            return None
+
+        print(f"{'Name':<30} | {'Address':<20}")
+        print("-" * 50)
+        
+        for device in devices:
+            name = device.name if device.name else "Unknown"
+            print(f"{name:<30} | {device.address:<20}")
+
+        # Look for our target device
+        for d in devices:
+            if d.name and ("NimBLE" in d.name or "ESP" in d.name or "GATT" in d.name):
+                print(f"\nFound target device: {d.name} ({d.address})")
+                return d
     
     return None
 
@@ -68,14 +100,10 @@ async def request_mtu(client: BleakClient, mtu: int = 512) -> int:
     """Request specific MTU from the server"""
     global current_mtu
     try:
-        # Request larger MTU
-        await client.get_device().pair()
-        # On Windows, MTU negotiation is handled differently
-        # Let's check what MTU we got
-        mtu_value = mtu  # Default to requested
+        # Request larger MTU - on Windows this is handled automatically
         print(f"Requested MTU: {mtu}")
-        current_mtu = mtu_value
-        return mtu_value
+        current_mtu = mtu
+        return mtu
     except Exception as e:
         print(f"MTU request error (using default): {e}")
         return 23
@@ -109,10 +137,9 @@ async def connect_and_test(address: str = None):
         print("="*50)
         
         try:
-            # Try to negotiate larger MTU
-            await client.get_device().pair()
-            # On some platforms, MTU is negotiated automatically
-            print(f"MTU negotiated: {current_mtu}")
+            # On Windows, MTU is typically negotiated automatically
+            # The actual MTU will be available after connection
+            print(f"MTU will be negotiated automatically")
         except Exception as e:
             print(f"Note: {e}")
         
@@ -439,11 +466,26 @@ async def main():
 if __name__ == "__main__":
     print("""
 BLE GATT Client Tester
-======================
+=====================
 Usage:
   python ble_test_client.py [address]           - Auto test
   python ble_test_client.py -i <address>        - Interactive mode
   python ble_test_client.py --mtu <address>     - MTU test
   python ble_test_client.py --stress <address> - Stress test
 """)
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except BleakBluetoothNotAvailableError:
+        print("\n" + "="*60)
+        print("ERROR: Bluetooth is not available!")
+        print("="*60)
+        print("\nPlease do the following:")
+        print("  1. Turn ON Bluetooth in Windows Settings")
+        print("     Settings > Bluetooth & devices > Toggle Bluetooth ON")
+        print("")
+        print("  2. Or click the Bluetooth icon in the system tray")
+        print("     and enable Bluetooth")
+        print("")
+        print("  3. If using a USB Bluetooth adapter,")
+        print("     make sure it's plugged in and drivers are installed")
+        print("="*60 + "\n")
