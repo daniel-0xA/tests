@@ -13,48 +13,25 @@ from bleak.exc import BleakBluetoothNotAvailableError
 
 # UUIDs matching the OpenOBD server
 TESTER_SERVICE_UUID = "000000FF-0000-1000-8000-00805F9B34FB"
-CMD_CHAR_UUID = "0000FF01-0000-1000-8000-00805F9B34FB"
-STATUS_CHAR_UUID = "0000FF02-0000-1000-8000-00805F9B34FB"
-DATA_CHAR_UUID = "0000FF03-0000-1000-8000-00805F9B34FB"
-CCCD_UUID = "00002902-0000-1000-8000-00805F9B34FB"
+CMD_CHAR_UUID       = "0000FF01-0000-1000-8000-00805F9B34FB"
+STATUS_CHAR_UUID    = "0000FF02-0000-1000-8000-00805F9B34FB"
+DATA_CHAR_UUID      = "0000FF03-0000-1000-8000-00805F9B34FB"
+CCCD_UUID           = "00002902-0000-1000-8000-00805F9B34FB"
 
-# Global tracking
-received_status = []
-received_data = []
-current_mtu = 23
+class BLEState:
+    current_mtu = 23
+    received_status = []
+    received_data = []
 
-
-def notification_handler(characteristic: BleakGATTCharacteristic, data: bytearray):
-    """Handle incoming notifications"""
-    global received_status, received_data
-    char_uuid = characteristic.uuid
-    value = bytes(data)
-    
-    if char_uuid == STATUS_CHAR_UUID:
-        print(f"[STATUS NOTIFY] {value.hex()} | {value}")
-        received_status.append(value)
-    elif char_uuid == DATA_CHAR_UUID:
-        print(f"[DATA NOTIFY] {len(value)} bytes: {value.hex()[:64]}...")
-        received_data.append(value)
-    else:
-        print(f"[NOTIFY] {char_uuid}: {value.hex()}")
-
+state = BLEState()
 
 async def find_device() -> BLEDevice | None:
     """Scan for the OpenOBD device"""
     print("Scanning for BLE devices...")
     
     try:
-        # Try newer API with return_advertisement_data=True
-        result = await BleakScanner.discover(timeout=5, return_advertisement_data=True)
-        
-        # Handle dict vs list response
-        if isinstance(result, dict):
-            devices = result
-        else:
-            # Older API returns list, convert to dict
-            devices = {d: None for d in result}
-        
+        devices = await BleakScanner.discover(timeout=5, return_advertisement_data=True, return_adv=True)
+
         if not devices:
             print("No BLE devices found. Ensure Bluetooth is ON.")
             return None
@@ -62,16 +39,24 @@ async def find_device() -> BLEDevice | None:
         print(f"{'Name':<30} | {'Address':<20} | {'RSSI':<5}")
         print("-" * 60)
         
-        for device, adv_data in devices.items():
+        for address, (device, adv_data) in devices.items():
             name = device.name if device.name else "Unknown"
-            rssi = adv_data.rssi if adv_data else -999
-            print(f"{name:<30} | {device.address:<20} | {rssi} dBm")
+            rssi = adv_data.rssi  # Now properly captured from the live callback
+            print(f"{name:<30} | {address:<20} | {rssi} dBm")
+            # print(device)
+            # print(adv_data)
 
         # Look for our target device
-        for device, adv_data in devices.items():
-            if device.name and ("OpenOBD53" in device.name or "OpenOBD50" in device.name or "ESP" in device.name or "GATT" in device.name):
-                print(f"\nFound target device: {device.name} ({device.address})")
+        # TARGET_NAMES = ["OpenOBD50", "OpenOBD53", "VEEPEAK"]
+        TARGET_NAMES = ["OpenOBD53"]
+        for address, (device, adv_data) in devices.items():
+            if device.name and (device.name in TARGET_NAMES):
+                print(f"Found target device: {device.name} ({device.address})")
+                # d = {address: (device, adv_data)}
                 return device
+        
+        # await find_device()
+
     except TypeError:
         # Fallback to older API without return_advertisement_data
         devices = await BleakScanner.discover(timeout=5)
@@ -95,28 +80,36 @@ async def find_device() -> BLEDevice | None:
     
     return None
 
-
-async def request_mtu(client: BleakClient, mtu: int = 512) -> int:
+def request_mtu(client: BleakClient):
     """Request specific MTU from the server"""
-    global current_mtu
     try:
         # Request larger MTU - on Windows this is handled automatically
-        print(f"Requested MTU: {mtu}")
-        current_mtu = mtu
-        return mtu
+        state.current_mtu = client.mtu_size
+        print(f"Got MTU: {state.current_mtu}")
     except Exception as e:
         print(f"MTU request error (using default): {e}")
         return 23
 
+def notification_handler(characteristic: BleakGATTCharacteristic, data: bytearray):
+    """Handle incoming notifications"""
+    char_uuid = characteristic.uuid
+    value = bytes(data)
+    
+    if char_uuid == STATUS_CHAR_UUID:
+        print(f"[STATUS NOTIFY] {value.hex()} | {value}")
+        state.received_status.append(value)
+    elif char_uuid == DATA_CHAR_UUID:
+        print(f"[DATA NOTIFY] {len(value)} bytes: {value.hex()[:64]}...")
+        state.received_data.append(value)
+    else:
+        print(f"[NOTIFY] {char_uuid}: {value.hex()}")
 
-async def connect_and_test(address: str = None):
+async def connect_and_test(address: str | None = None):
     """Connect to device and test all characteristics"""
-    global current_mtu, received_status, received_data
     
     # Reset state
-    received_status = []
-    received_data = []
-    current_mtu = 23
+    state.received_status = []
+    state.received_data = []
     
     # Find device
     if not address:
@@ -131,18 +124,8 @@ async def connect_and_test(address: str = None):
     async with BleakClient(address) as client:
         print(f"Connected: {client.is_connected}")
         
-        # Request larger MTU
-        print("\n" + "="*50)
-        print("TEST 0: Request larger MTU")
-        print("="*50)
-        
-        try:
-            # On Windows, MTU is typically negotiated automatically
-            # The actual MTU will be available after connection
-            print(f"MTU will be negotiated automatically")
-        except Exception as e:
-            print(f"Note: {e}")
-        
+        print("TEST 0: Request MTU")
+        request_mtu(client)
         await asyncio.sleep(0.5)
         
         # Get service
@@ -160,11 +143,11 @@ async def connect_and_test(address: str = None):
         print("\nCharacteristics:")
         for char in service.characteristics:
             props = []
-            if char.properties & 0x01: props.append("Read")
-            if char.properties & 0x02: props.append("Write")
-            if char.properties & 0x04: props.append("WriteNoResp")
-            if char.properties & 0x08: props.append("Indicate")
-            if char.properties & 0x10: props.append("Notify")
+            if "read" in char.properties: props.append("Read")
+            if "write" in char.properties: props.append("Write")
+            if "write-without-response" in char.properties: props.append("WriteNoResp")
+            if "indicate" in char.properties: props.append("Indicate")
+            if "notify" in char.properties: props.append("Notify")
             
             print(f"  {char.uuid}")
             print(f"    Properties: {', '.join(props)}")
@@ -177,6 +160,8 @@ async def connect_and_test(address: str = None):
         if not all([cmd_char, status_char, data_char]):
             print("ERROR: Missing required characteristics!")
             return
+        
+        assert cmd_char and status_char and data_char
         
         # Enable notifications for STATUS and DATA
         print("\nEnabling notifications...")
@@ -285,14 +270,14 @@ async def connect_and_test(address: str = None):
         print("\n" + "="*50)
         print("SUMMARY")
         print("="*50)
-        print(f"MTU: {current_mtu} bytes")
-        print(f"STATUS notifications received: {len(received_status)}")
-        print(f"DATA notifications received: {len(received_data)}")
+        print(f"MTU: {state.current_mtu} bytes")
+        print(f"STATUS notifications received: {len(state.received_status)}")
+        print(f"DATA notifications received: {len(state.received_data)}")
         
         # Show notification details
-        if received_data:
+        if state.received_data:
             print("\nDATA notifications details:")
-            for i, data in enumerate(received_data):
+            for i, data in enumerate(state.received_data):
                 print(f"  [{i}] {len(data)} bytes: {data.hex()[:32]}...")
         
         print("\nAll tests completed!")
@@ -300,11 +285,8 @@ async def connect_and_test(address: str = None):
 
 async def mtu_test(address: str):
     """Dedicated MTU test"""
-    global current_mtu, received_status, received_data
-    
-    received_status = []
-    received_data = []
-    current_mtu = 23
+    state.received_status = []
+    state.received_data = []
     
     async with BleakClient(address) as client:
         print(f"Connected to {address}")
@@ -316,6 +298,12 @@ async def mtu_test(address: str):
         
         cmd_char = service.get_characteristic(CMD_CHAR_UUID)
         data_char = service.get_characteristic(DATA_CHAR_UUID)
+        
+        if not cmd_char or not data_char:
+            print("Characteristics not found!")
+            return
+        
+        assert data_char
         
         # Enable DATA notifications
         await client.start_notify(data_char, notification_handler)
@@ -333,23 +321,32 @@ async def mtu_test(address: str):
             await client.write_gatt_char(data_char, test_data)
             await asyncio.sleep(1)
         
-        print(f"\nNotifications received: {len(received_data)}")
+        print(f"\nNotifications received: {len(state.received_data)}")
         
-        for i, data in enumerate(received_data):
+        for i, data in enumerate(state.received_data):
             print(f"  [{i}] {len(data)} bytes")
 
 
 async def stress_test(address: str):
     """Stress test with rapid writes"""
-    global received_data
     
-    received_data = []
+    state.received_data = []
     
     async with BleakClient(address) as client:
         print(f"Connected to {address}")
         
         service = client.services.get_service(TESTER_SERVICE_UUID)
+        if not service:
+            print("Service not found!")
+            return
+        
         data_char = service.get_characteristic(DATA_CHAR_UUID)
+        
+        if not data_char:
+            print("DATA characteristic not found!")
+            return
+        
+        assert data_char
         
         await client.start_notify(data_char, notification_handler)
         await asyncio.sleep(0.5)
@@ -365,7 +362,7 @@ async def stress_test(address: str):
         
         await asyncio.sleep(2)
         
-        print(f"\nReceived {len(received_data)} notifications")
+        print(f"\nReceived {len(state.received_data)} notifications")
 
 
 async def interactive_mode(address: str):
@@ -380,9 +377,19 @@ async def interactive_mode(address: str):
         print("  q          - Quit")
         
         service = client.services.get_service(TESTER_SERVICE_UUID)
+        if not service:
+            print("Service not found!")
+            return
+        
         cmd_char = service.get_characteristic(CMD_CHAR_UUID)
         status_char = service.get_characteristic(STATUS_CHAR_UUID)
         data_char = service.get_characteristic(DATA_CHAR_UUID)
+        
+        if not all([cmd_char, status_char, data_char]):
+            print("Characteristics not found!")
+            return
+        
+        assert cmd_char and status_char and data_char
         
         chars = {
             "cmd": cmd_char,
@@ -465,14 +472,14 @@ async def main():
 
 if __name__ == "__main__":
     print("""
-BLE GATT Client Tester
-=====================
-Usage:
-  python ble_test_client.py [address]           - Auto test
-  python ble_test_client.py -i <address>        - Interactive mode
-  python ble_test_client.py --mtu <address>     - MTU test
-  python ble_test_client.py --stress <address> - Stress test
-""")
+        BLE GATT Client Tester
+        =====================
+        Usage:
+        python ble_test_client.py [address]           - Auto test
+        python ble_test_client.py -i <address>        - Interactive mode
+        python ble_test_client.py --mtu <address>     - MTU test
+        python ble_test_client.py --stress <address> - Stress test
+        """)
     try:
         asyncio.run(main())
     except BleakBluetoothNotAvailableError:
