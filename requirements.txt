@@ -1,0 +1,4 @@
+# Python BLE Test Client Dependencies
+# Install with: pip install -r requirements.txt
+
+bleak>=0.20.0

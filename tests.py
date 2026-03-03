@@ -20,7 +20,7 @@ def status_handler(sender, data):
 
 async def run_tester():
     try:
-        devName = "nimble-ble-spp-svr1"#"OpenOBD" #"VEEPEAK"
+        devName = "OpenOBD53"#"OpenOBD50" #"VEEPEAK"
         print(f"Scanning for {devName}...")
         device = await BleakScanner.find_device_by_name(devName)
         

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BLE GATT Client Tester for NimBLE GATT Server
+BLE GATT Client Tester for OpenOBD GATT Server
 Tests all characteristics: CMD, STATUS, DATA, MTU handling
 """
 
@@ -11,7 +11,7 @@ from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakBluetoothNotAvailableError
 
-# UUIDs matching the NimBLE server
+# UUIDs matching the OpenOBD server
 TESTER_SERVICE_UUID = "000000FF-0000-1000-8000-00805F9B34FB"
 CMD_CHAR_UUID = "0000FF01-0000-1000-8000-00805F9B34FB"
 STATUS_CHAR_UUID = "0000FF02-0000-1000-8000-00805F9B34FB"
@@ -41,7 +41,7 @@ def notification_handler(characteristic: BleakGATTCharacteristic, data: bytearra
 
 
 async def find_device() -> BLEDevice | None:
-    """Scan for the NimBLE GATT server device"""
+    """Scan for the OpenOBD device"""
     print("Scanning for BLE devices...")
     
     try:
@@ -69,7 +69,7 @@ async def find_device() -> BLEDevice | None:
 
         # Look for our target device
         for device, adv_data in devices.items():
-            if device.name and ("NimBLE" in device.name or "ESP" in device.name or "GATT" in device.name):
+            if device.name and ("OpenOBD53" in device.name or "OpenOBD50" in device.name or "ESP" in device.name or "GATT" in device.name):
                 print(f"\nFound target device: {device.name} ({device.address})")
                 return device
     except TypeError:
@@ -89,7 +89,7 @@ async def find_device() -> BLEDevice | None:
 
         # Look for our target device
         for d in devices:
-            if d.name and ("NimBLE" in d.name or "ESP" in d.name or "GATT" in d.name):
+            if d.name and ("OpenOBD" in d.name or "ESP" in d.name):
                 print(f"\nFound target device: {d.name} ({d.address})")
                 return d
     
