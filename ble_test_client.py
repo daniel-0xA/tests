@@ -467,7 +467,8 @@ async def main():
             address = sys.argv[1] if len(sys.argv) > 1 else None
             await connect_and_test(address)
     else:
-        await connect_and_test()
+        # await connect_and_test()
+        await connect_and_test("58:8C:81:52:85:62") #OpenOBD53
 
 
 if __name__ == "__main__":
